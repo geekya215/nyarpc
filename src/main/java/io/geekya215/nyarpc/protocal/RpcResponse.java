@@ -11,15 +11,15 @@ public record RpcResponse(byte type, @Nullable Object data) implements Serializa
     public static final byte RESPONSE_WITH_EXCEPTION = 2;
 
     public static final class Builder {
-        byte type;
-        Object data;
+        private byte type;
+        private @Nullable Object data;
 
-        public Builder type(byte type) {
+        public @NotNull Builder type(byte type) {
             this.type = type;
             return this;
         }
 
-        public Builder data(@NotNull Object data) {
+        public @NotNull Builder data(@Nullable Object data) {
             this.data = data;
             return this;
         }

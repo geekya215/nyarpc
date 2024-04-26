@@ -1,10 +1,10 @@
 package io.geekya215.nyarpc.serializer;
 
 public final class SerializerFactory {
-    public static Serializer getSerializer(byte serialization) {
-        return switch (serialization) {
+    public static Serializer getSerializer(byte type) {
+        return switch (type) {
             case SerializationType.JDK -> new JdkSerializer();
-            default -> throw new IllegalArgumentException("unsupported serialization type");
+            default -> throw new IllegalArgumentException("unsupported serializer type: " + type);
         };
     }
 }

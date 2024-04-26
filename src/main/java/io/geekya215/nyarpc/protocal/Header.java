@@ -1,69 +1,59 @@
 package io.geekya215.nyarpc.protocal;
 
-public record Header(short magic, byte type, byte serialization, byte compress,
-                     byte status, long sequence, int length) {
+import org.jetbrains.annotations.NotNull;
+
+public record Header(short magic, byte type, byte serializer, byte compress, byte status,
+                     long sequence, int length) {
 
     public static class Builder {
-        short magic;
-        byte type;
-        byte serialization;
-        byte compress;
-        byte status;
-        long sequence;
-        // Todo
-        // use varint instead of fixed length int
-        int length;
+        private short magic;
+        private byte type;
+        private byte serializer;
+        private byte compress;
+        private byte status;
+        private long sequence;
+        private int length;
 
         public Builder() {
         }
 
-        public Builder(Header header) {
-            magic = header.magic;
-            type = header.type;
-            serialization = header.serialization;
-            compress = header.compress;
-            status = header.status;
-            sequence = header.sequence;
-            length = header.length;
-        }
-
-        public Builder magic(short magic) {
+        public @NotNull Builder magic(short magic) {
             this.magic = magic;
             return this;
         }
 
-        public Builder type(byte type) {
+        public @NotNull Builder type(byte type) {
             this.type = type;
             return this;
         }
 
-        public Builder serialization(byte serialization) {
-            this.serialization = serialization;
+        public @NotNull Builder serializer(byte serializer) {
+            this.serializer = serializer;
             return this;
         }
 
-        public Builder compress(byte compress) {
+        public @NotNull Builder compress(byte compress) {
             this.compress = compress;
             return this;
         }
 
-        public Builder status(byte status) {
+        public @NotNull Builder status(byte status) {
             this.status = status;
             return this;
         }
 
-        public Builder sequence(long sequence) {
+        public @NotNull Builder sequence(long sequence) {
             this.sequence = sequence;
             return this;
         }
 
-        public Builder length(int length) {
+        public @NotNull Builder length(int length) {
             this.length = length;
             return this;
         }
 
-        public Header build() {
-            return new Header(magic, type, serialization, compress, status, sequence, length);
+        public @NotNull Header build() {
+            return new Header(magic, type, serializer, compress, status, sequence, length);
         }
     }
 }
