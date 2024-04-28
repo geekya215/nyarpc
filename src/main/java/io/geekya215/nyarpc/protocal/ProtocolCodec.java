@@ -17,7 +17,7 @@ public final class ProtocolCodec extends MessageToMessageCodec<ByteBuf, Protocol
         final Header header = protocol.header();
         final Object body = protocol.body();
 
-        buf.writeShort(Protocol.MAGIC);
+        buf.writeShort(header.magic());
 
         buf.writeByte(header.type());
         buf.writeByte(header.serializer());
@@ -58,7 +58,7 @@ public final class ProtocolCodec extends MessageToMessageCodec<ByteBuf, Protocol
         final Class<?> dt = switch (type) {
             case MessageType.REQUEST -> RpcRequest.class;
             case MessageType.RESPONSE -> RpcResponse.class;
-            default -> throw new IllegalAccessException("unsupported protocol type: " + type);
+            default -> throw new IllegalArgumentException("unsupported protocol type: " + type);
         };
 
         final Object body = serializer.deserialize(bodyByteArray, dt);
