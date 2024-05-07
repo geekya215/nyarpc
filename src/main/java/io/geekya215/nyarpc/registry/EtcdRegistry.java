@@ -17,8 +17,8 @@ import java.util.stream.Collectors;
 import static io.etcd.jetcd.ByteSequence.NAMESPACE_DELIMITER;
 
 public final class EtcdRegistry implements Registry {
+    private static final Duration CONNECTION_TIMEOUT = Duration.ofSeconds(3L);
     private final @NotNull Client client;
-    static final Duration CONNECTION_TIMEOUT = Duration.ofSeconds(3L);
 
     public EtcdRegistry(@NotNull RegistryConfig registryConfig) {
         this(registryConfig.host() + ":" + registryConfig.port());

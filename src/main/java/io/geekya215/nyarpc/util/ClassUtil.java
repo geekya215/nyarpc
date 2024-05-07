@@ -17,13 +17,12 @@ public final class ClassUtil {
     public static @NotNull List<@NotNull Class<?>> scanClassesWithAnnotation(
             @NotNull String packageName,
             @NotNull Class<? extends Annotation> annotationClass)
-            throws IOException, ClassNotFoundException
-    {
+            throws IOException, ClassNotFoundException {
         final ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
         final String path = packageName.replace('.', '/');
         final Enumeration<URL> resources = classLoader.getResources(path);
 
-        final List<Class<?>> classes = new ArrayList<>();
+        final List<@NotNull Class<?>> classes = new ArrayList<>();
 
         while (resources.hasMoreElements()) {
             final URL resource = resources.nextElement();
@@ -35,7 +34,7 @@ public final class ClassUtil {
                     final File[] files = directory.listFiles();
 
                     if (files != null) {
-                        for (File file : files) {
+                        for (final File file : files) {
                             if (file.isDirectory()) {
                                 classes.addAll(scanClassesWithAnnotation(packageName + "." + file.getName(), annotationClass));
                             } else if (file.getName().endsWith(".class")) {

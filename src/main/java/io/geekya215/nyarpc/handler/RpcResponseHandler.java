@@ -7,12 +7,13 @@ import io.geekya215.nyarpc.protocal.RpcResponse;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.util.concurrent.Promise;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class RpcResponseHandler extends SimpleChannelInboundHandler<Protocol<RpcResponse>> {
-    public static final Map<Long, Promise<Object>> PROMISE_RESULTS = new ConcurrentHashMap<>();
+    public static final Map<@NotNull Long, @NotNull Promise<Object>> PROMISE_RESULTS = new ConcurrentHashMap<>();
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, Protocol<RpcResponse> protocol) throws Exception {

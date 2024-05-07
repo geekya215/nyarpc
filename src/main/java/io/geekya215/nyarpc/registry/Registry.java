@@ -10,6 +10,9 @@ public interface Registry extends Closeable {
     String RPC_NAMESPACE = "rpc";
 
     void register(@NotNull ServiceMeta serviceMeta);
+
     void unregister(@NotNull ServiceMeta serviceMeta);
-    @NotNull Map<String, @NotNull List<@NotNull Instance>> discovery();
+
+    @NotNull
+    Map<String, @NotNull List<@NotNull Instance>> discovery();
 }
