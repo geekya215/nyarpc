@@ -14,7 +14,7 @@ public final class ClassUtil {
     private ClassUtil() {
     }
 
-    public static @NotNull List<Class<?>> scanClassesWithAnnotation(
+    public static @NotNull List<@NotNull Class<?>> scanClassesWithAnnotation(
             @NotNull String packageName,
             @NotNull Class<? extends Annotation> annotationClass)
             throws IOException, ClassNotFoundException
@@ -40,7 +40,7 @@ public final class ClassUtil {
                                 classes.addAll(scanClassesWithAnnotation(packageName + "." + file.getName(), annotationClass));
                             } else if (file.getName().endsWith(".class")) {
                                 final String className = packageName + '.' + file.getName().substring(0, file.getName().length() - 6);
-                                Class<?> clazz = Class.forName(className);
+                                final Class<?> clazz = Class.forName(className);
                                 if (clazz.isAnnotationPresent(annotationClass)) {
                                     classes.add(clazz);
                                 }
