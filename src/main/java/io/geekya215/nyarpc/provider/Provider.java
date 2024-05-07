@@ -1,14 +1,13 @@
 package io.geekya215.nyarpc.provider;
 
-import io.geekya215.nyarpc.util.ClassUtil;
 import io.geekya215.nyarpc.annotation.RpcService;
 import io.geekya215.nyarpc.handler.RpcRequestHandler;
 import io.geekya215.nyarpc.protocal.ProtocolCodec;
 import io.geekya215.nyarpc.protocal.ProtocolFrameDecoder;
 import io.geekya215.nyarpc.registry.EtcdRegistry;
 import io.geekya215.nyarpc.registry.Registry;
-import io.geekya215.nyarpc.registry.RegistryConfig;
 import io.geekya215.nyarpc.registry.ServiceMeta;
+import io.geekya215.nyarpc.util.ClassUtil;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
@@ -17,11 +16,13 @@ import io.netty.channel.ChannelPipeline;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.logging.LoggingHandler;
+import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.util.*;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class Provider {
@@ -29,12 +30,12 @@ public final class Provider {
 
     private static final LoggingHandler PROVIDER_LOGGING_HANDLER = new LoggingHandler();
     private static final ProtocolCodec PROVIDER_PROTOCOL_CODEC = new ProtocolCodec();
-    private final Map<String, Class<?>> serviceClasses;
 
-    private final ProviderConfig config;
-    private final Registry registry;
+    private final @NotNull Map<@NotNull String, @NotNull Class<?>> serviceClasses;
+    private final @NotNull ProviderConfig config;
+    private final @NotNull Registry registry;
 
-    public Provider(ProviderConfig config) {
+    public Provider(@NotNull ProviderConfig config) {
         this.config = config;
         // Todo
         // use SPI
@@ -58,7 +59,7 @@ public final class Provider {
         registerRpcService();
 
         final ServerBootstrap bootstrap = new ServerBootstrap();
-        try(
+        try (
                 final NioEventLoopGroup boss = new NioEventLoopGroup();
                 final NioEventLoopGroup worker = new NioEventLoopGroup()
         ) {
@@ -81,16 +82,5 @@ public final class Provider {
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
         }
-    }
-
-    public static void main(String[] args) throws IOException, ClassNotFoundException {
-        final RegistryConfig registryConfig = new RegistryConfig("http://localhost", 2379);
-        try {
-            Provider provider = new Provider(new ProviderConfig(registryConfig, "127.0.0.1", 8080));
-            provider.start();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        System.out.println("11");
     }
 }
