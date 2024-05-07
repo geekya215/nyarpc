@@ -12,13 +12,14 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class RpcResponseHandler extends SimpleChannelInboundHandler<Protocol<RpcResponse>> {
-    public static final Map<Long, Promise<Object>> PROMISE_RESULT = new ConcurrentHashMap<>();
+    public static final Map<Long, Promise<Object>> PROMISE_RESULTS = new ConcurrentHashMap<>();
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, Protocol<RpcResponse> protocol) throws Exception {
         final Header header = protocol.header();
         final RpcResponse response = protocol.body();
-        final Promise<Object> promise = PROMISE_RESULT.remove(header.sequence());
+        final Promise<Object> promise = PROMISE_RESULTS.remove(header.sequence());
+
         if (promise != null) {
             if (header.status() == MessageStatus.SUCCESS) {
                 promise.setSuccess(response.data());
@@ -26,6 +27,5 @@ public final class RpcResponseHandler extends SimpleChannelInboundHandler<Protoc
                 promise.setFailure((Throwable) response.data());
             }
         }
-        ctx.close();
     }
 }

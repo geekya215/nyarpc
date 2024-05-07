@@ -1,5 +1,6 @@
 package io.geekya215.nyarpc.handler;
 
+import io.geekya215.nyarpc.exception.RpcException;
 import io.geekya215.nyarpc.protocal.*;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
@@ -11,9 +12,9 @@ import java.lang.reflect.Method;
 import java.util.Map;
 
 public final class RpcRequestHandler extends SimpleChannelInboundHandler<Protocol<RpcRequest>> {
-    private final @NotNull Map<String, Class<?>> serviceClasses;
+    private final @NotNull Map<@NotNull String, @NotNull Class<?>> serviceClasses;
 
-    public RpcRequestHandler(@NotNull Map<String, Class<?>> serviceClasses) {
+    public RpcRequestHandler(@NotNull Map<@NotNull String, @NotNull Class<?>> serviceClasses) {
         this.serviceClasses = serviceClasses;
     }
 
@@ -42,11 +43,10 @@ public final class RpcRequestHandler extends SimpleChannelInboundHandler<Protoco
             responseHeaderBuilder.status(MessageStatus.SUCCESS);
             responseBuilder.data(responseData);
         } catch (Exception e) {
-            e.printStackTrace();
             responseHeaderBuilder.status(MessageStatus.FAIL);
 
             responseBuilder.type(RpcResponse.RESPONSE_WITH_EXCEPTION);
-            responseBuilder.data("RPC failed, cause: " + e);
+            responseBuilder.data(new RpcException("Rpc failed, cause", e));
         }
 
         final Header responseHeader = responseHeaderBuilder.build();
@@ -60,7 +60,7 @@ public final class RpcRequestHandler extends SimpleChannelInboundHandler<Protoco
         if (clazz == null) {
             throw new ClassNotFoundException(request.serviceName());
         }
-        final Method method = clazz.getDeclaredMethod(request.methodName(), request.returnType());
+        final Method method = clazz.getDeclaredMethod(request.methodName(), request.parameterTypes());
         return method.invoke(clazz.getConstructor().newInstance(), request.args());
     }
 }
