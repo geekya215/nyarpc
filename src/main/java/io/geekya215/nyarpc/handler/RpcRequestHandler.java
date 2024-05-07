@@ -8,8 +8,15 @@ import org.jetbrains.annotations.Nullable;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.Map;
 
 public final class RpcRequestHandler extends SimpleChannelInboundHandler<Protocol<RpcRequest>> {
+    private final @NotNull Map<String, Class<?>> serviceClasses;
+
+    public RpcRequestHandler(@NotNull Map<String, Class<?>> serviceClasses) {
+        this.serviceClasses = serviceClasses;
+    }
+
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, Protocol<RpcRequest> protocol) throws Exception {
         final Header requestHeader = protocol.header();
@@ -49,8 +56,11 @@ public final class RpcRequestHandler extends SimpleChannelInboundHandler<Protoco
     }
 
     private @Nullable Object handle(@NotNull RpcRequest request) throws ClassNotFoundException, NoSuchMethodException, InstantiationException, IllegalAccessException, InvocationTargetException {
-        Class<?> clazz = Class.forName(request.serviceName());
-        Method method = clazz.getDeclaredMethod(request.methodName(), request.returnType());
+        final Class<?> clazz = serviceClasses.get(request.serviceName());
+        if (clazz == null) {
+            throw new ClassNotFoundException(request.serviceName());
+        }
+        final Method method = clazz.getDeclaredMethod(request.methodName(), request.returnType());
         return method.invoke(clazz.getConstructor().newInstance(), request.args());
     }
 }
