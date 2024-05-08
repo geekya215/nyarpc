@@ -9,10 +9,11 @@ import java.util.Map;
 public interface Registry extends Closeable {
     String RPC_NAMESPACE = "rpc";
 
+    void init(@NotNull RegistryConfig registryConfig);
+
     void register(@NotNull ServiceMeta serviceMeta);
 
     void unregister(@NotNull ServiceMeta serviceMeta);
 
-    @NotNull
-    Map<String, @NotNull List<@NotNull Instance>> discovery();
+    @NotNull Map<@NotNull String, @NotNull List<@NotNull Instance>> discovery();
 }

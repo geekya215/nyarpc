@@ -7,6 +7,7 @@ import io.etcd.jetcd.kv.GetResponse;
 import io.etcd.jetcd.options.GetOption;
 import io.geekya215.nyarpc.exception.RegistryException;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.time.Duration;
 import java.util.List;
@@ -18,15 +19,17 @@ import static io.etcd.jetcd.ByteSequence.NAMESPACE_DELIMITER;
 
 public final class EtcdRegistry implements Registry {
     private static final Duration CONNECTION_TIMEOUT = Duration.ofSeconds(3L);
-    private final @NotNull Client client;
 
-    public EtcdRegistry(@NotNull RegistryConfig registryConfig) {
-        this(registryConfig.host() + ":" + registryConfig.port());
+    // lazy instantiate for SPI load
+    private @Nullable Client client;
+
+    public EtcdRegistry() {
     }
 
-    public EtcdRegistry(@NotNull String endpoint) {
-        client = Client.builder()
-                .endpoints(endpoint)
+    @Override
+    public void init(@NotNull RegistryConfig registryConfig) {
+        this.client = Client.builder()
+                .endpoints(registryConfig.host() + ":" + registryConfig.port())
                 .connectTimeout(CONNECTION_TIMEOUT)
                 .waitForReady(false)
                 .build();
@@ -52,7 +55,7 @@ public final class EtcdRegistry implements Registry {
         }
     }
 
-    public @NotNull Map<String, @NotNull List<@NotNull Instance>> discovery() {
+    public @NotNull Map<@NotNull String, @NotNull List<@NotNull Instance>> discovery() {
         try (final KV kv = client.getKVClient()) {
             final String key = RPC_NAMESPACE + NAMESPACE_DELIMITER;
             final GetOption getOption = GetOption.builder().isPrefix(true).build();
