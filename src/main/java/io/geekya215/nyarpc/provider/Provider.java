@@ -16,6 +16,8 @@ import io.netty.channel.ChannelPipeline;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.logging.LoggingHandler;
+import net.openhft.affinity.AffinityStrategies;
+import net.openhft.affinity.AffinityThreadFactory;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,9 +48,7 @@ public final class Provider {
     }
 
     public void registerRpcService() throws IOException, ClassNotFoundException {
-        // Todo
-        // specific scan path in provider configuration
-        final List<Class<?>> classes = ClassUtil.scanClassesWithAnnotation("io.geekya215.nyarpc", RpcService.class);
+        final List<Class<?>> classes = ClassUtil.scanClassesWithAnnotation(config.scanPath(), RpcService.class);
         for (final Class<?> clazz : classes) {
             final RpcService annotation = clazz.getAnnotation(RpcService.class);
             final Class<?> serviceClass = annotation.serviceClass();
@@ -62,9 +62,11 @@ public final class Provider {
     public void start() throws IOException, ClassNotFoundException {
         registerRpcService();
 
+        final AffinityThreadFactory affinity =
+                new AffinityThreadFactory("affinity", AffinityStrategies.DIFFERENT_CORE, AffinityStrategies.DIFFERENT_SOCKET);
         final ServerBootstrap bootstrap = new ServerBootstrap();
         final NioEventLoopGroup boss = new NioEventLoopGroup();
-        final NioEventLoopGroup worker = new NioEventLoopGroup();
+        final NioEventLoopGroup worker = new NioEventLoopGroup(affinity);
 
         try {
             final ChannelFuture bindFuture = bootstrap.group(boss, worker)

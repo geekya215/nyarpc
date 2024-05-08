@@ -49,6 +49,12 @@
             <artifactId>kryo</artifactId>
             <version>5.6.0</version>
         </dependency>
+
+        <dependency>
+            <groupId>net.openhft</groupId>
+            <artifactId>affinity</artifactId>
+            <version>3.23.3</version>
+        </dependency>
     </dependencies>
 
 </project>
