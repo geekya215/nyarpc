@@ -1,11 +1,13 @@
 package io.geekya215.nyarpc.consumer;
 
+import io.geekya215.nyarpc.annotation.RpcReference;
 import io.geekya215.nyarpc.handler.RpcResponseHandler;
+import io.geekya215.nyarpc.loadbalance.LoadBalancer;
+import io.geekya215.nyarpc.loadbalance.RoundRobinLoadBalancer;
 import io.geekya215.nyarpc.protocal.*;
 import io.geekya215.nyarpc.registry.EtcdRegistry;
 import io.geekya215.nyarpc.registry.Instance;
 import io.geekya215.nyarpc.registry.Registry;
-import io.geekya215.nyarpc.serializer.SerializationType;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
@@ -23,6 +25,7 @@ import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.ServiceLoader;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -36,12 +39,16 @@ public final class Consumer {
     private final @NotNull Map<@NotNull String, @NotNull List<@NotNull Instance>> services;
     private final @NotNull Map<@NotNull Class<?>, @NotNull List<@NotNull Channel>> channels;
     private final @NotNull Registry registry;
+    private final @NotNull LoadBalancer loadBalancer;
 
-    public Consumer(@NotNull ConsumerConfig consumerConfig) {
+    public Consumer(@NotNull ConsumerConfig config) {
         this.sequenceGenerator = new AtomicLong(0L);
         // Todo
         // use SPI
-        this.registry = new EtcdRegistry(consumerConfig.registryConfig());
+        this.registry = ServiceLoader.load(Registry.class).findFirst().orElse(new EtcdRegistry());
+        this.registry.init(config.registryConfig());
+
+        this.loadBalancer = ServiceLoader.load(LoadBalancer.class).findFirst().orElse(new RoundRobinLoadBalancer());
 
         this.services = new ConcurrentHashMap<>();
         this.channels = new ConcurrentHashMap<>();
@@ -110,15 +117,15 @@ public final class Consumer {
                 return tmp;
             });
 
-            // Todo
-            // use load balance
-            final Channel channel = candidateChannels.getFirst();
+            final Channel channel = loadBalancer.select(serviceClass, candidateChannels);
+
+            final byte serializer = serviceClass.getAnnotation(RpcReference.class).serializer();
 
             final Header.Builder headerBuilder = new Header.Builder();
             final Header header = headerBuilder
                     .magic(Protocol.MAGIC)
                     .type(MessageType.REQUEST)
-                    .serializer(SerializationType.JDK)
+                    .serializer(serializer)
                     .sequence(sequence)
                     .build();
 

@@ -23,6 +23,7 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.ServiceLoader;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class Provider {
@@ -37,13 +38,16 @@ public final class Provider {
 
     public Provider(@NotNull ProviderConfig config) {
         this.config = config;
-        // Todo
-        // use SPI
-        this.registry = new EtcdRegistry(config.registryConfig());
+
+        this.registry = ServiceLoader.load(Registry.class).findFirst().orElse(new EtcdRegistry());
+        this.registry.init(config.registryConfig());
+
         this.serviceClasses = new ConcurrentHashMap<>();
     }
 
     public void registerRpcService() throws IOException, ClassNotFoundException {
+        // Todo
+        // specific scan path in provider configuration
         final List<Class<?>> classes = ClassUtil.scanClassesWithAnnotation("io.geekya215.nyarpc", RpcService.class);
         for (final Class<?> clazz : classes) {
             final RpcService annotation = clazz.getAnnotation(RpcService.class);
@@ -59,10 +63,10 @@ public final class Provider {
         registerRpcService();
 
         final ServerBootstrap bootstrap = new ServerBootstrap();
-        try (
-                final NioEventLoopGroup boss = new NioEventLoopGroup();
-                final NioEventLoopGroup worker = new NioEventLoopGroup()
-        ) {
+        final NioEventLoopGroup boss = new NioEventLoopGroup();
+        final NioEventLoopGroup worker = new NioEventLoopGroup();
+
+        try {
             final ChannelFuture bindFuture = bootstrap.group(boss, worker)
                     .channel(NioServerSocketChannel.class)
                     .childHandler(new ChannelInitializer<>() {
@@ -81,6 +85,9 @@ public final class Provider {
             bindFuture.channel().closeFuture().sync();
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
+        } finally {
+            boss.shutdownGracefully();
+            worker.shutdownGracefully();
         }
     }
 }
