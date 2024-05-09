@@ -3,11 +3,14 @@ package io.geekya215.nyarpc.registry;
 import io.etcd.jetcd.ByteSequence;
 import io.etcd.jetcd.Client;
 import io.etcd.jetcd.KV;
+import io.etcd.jetcd.Lease;
 import io.etcd.jetcd.kv.GetResponse;
 import io.etcd.jetcd.options.GetOption;
+import io.etcd.jetcd.options.PutOption;
 import io.geekya215.nyarpc.exception.RegistryException;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.List;
@@ -19,11 +22,17 @@ import static io.etcd.jetcd.ByteSequence.NAMESPACE_DELIMITER;
 
 public final class EtcdRegistry implements Registry {
     private static final Duration CONNECTION_TIMEOUT = Duration.ofSeconds(3L);
+    private static final int DEFAULT_LEASE_TTL = 15; // seconds
+    private static final Logger log = LoggerFactory.getLogger(EtcdRegistry.class);
 
     // lazy instantiate for SPI load
-    private @Nullable Client client;
+    private Client client;
 
     public EtcdRegistry() {
+    }
+
+    private String buildServiceKey(@NotNull ServiceMeta serviceMeta) {
+        return RPC_NAMESPACE + NAMESPACE_DELIMITER + serviceMeta.serviceName() + "=" + serviceMeta.address().resolve();
     }
 
     @Override
@@ -36,10 +45,17 @@ public final class EtcdRegistry implements Registry {
     }
 
     @Override
-    public void register(@NotNull ServiceMeta serviceMeta) {
-        try (final KV kv = client.getKVClient()) {
-            final String key = RPC_NAMESPACE + NAMESPACE_DELIMITER + serviceMeta.serviceName() + "=" + serviceMeta.address();
-            kv.put(ByteSequence.from(key.getBytes()), ByteSequence.from(serviceMeta.address().getBytes())).get();
+    public void register(@NotNull ServiceMeta serviceMeta, int weight) {
+        try (
+                final KV kv = client.getKVClient();
+                final Lease leaseClient = client.getLeaseClient()
+        ) {
+            final long leaseId = leaseClient.grant(DEFAULT_LEASE_TTL).get().getID();
+            final PutOption putOption = PutOption.builder().withLeaseId(leaseId).build();
+            final String key = buildServiceKey(serviceMeta);
+            final String value = String.valueOf(weight);
+
+            kv.put(ByteSequence.from(key.getBytes()), ByteSequence.from(value.getBytes()), putOption).get();
         } catch (ExecutionException | InterruptedException e) {
             throw new RegistryException("register service failed, cause: ", e);
         }
@@ -48,7 +64,7 @@ public final class EtcdRegistry implements Registry {
     @Override
     public void unregister(@NotNull ServiceMeta serviceMeta) {
         try (final KV kv = client.getKVClient()) {
-            final String key = RPC_NAMESPACE + NAMESPACE_DELIMITER + serviceMeta.serviceName() + "=" + serviceMeta.address();
+            final String key = buildServiceKey(serviceMeta);
             kv.delete(ByteSequence.from(key.getBytes())).get();
         } catch (ExecutionException | InterruptedException e) {
             throw new RegistryException("unregister service failed, cause: ", e);
@@ -68,7 +84,7 @@ public final class EtcdRegistry implements Registry {
                     .filter(s -> s.length == 2)
                     .collect(Collectors.groupingBy(
                             s -> s[0],
-                            Collectors.mapping(s -> new Instance(s[1], 0), Collectors.toList())));
+                            Collectors.mapping(s -> new Instance(Address.from(s[1]), 0), Collectors.toList())));
 
             return result;
         } catch (ExecutionException | InterruptedException e) {

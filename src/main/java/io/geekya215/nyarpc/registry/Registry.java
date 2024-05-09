@@ -11,7 +11,7 @@ public interface Registry extends Closeable {
 
     void init(@NotNull RegistryConfig registryConfig);
 
-    void register(@NotNull ServiceMeta serviceMeta);
+    void register(@NotNull ServiceMeta serviceMeta, int weight);
 
     void unregister(@NotNull ServiceMeta serviceMeta);
 

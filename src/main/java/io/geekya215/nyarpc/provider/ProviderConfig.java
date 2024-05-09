@@ -6,5 +6,6 @@ import org.jetbrains.annotations.NotNull;
 public record ProviderConfig(
         @NotNull RegistryConfig registryConfig,
         @NotNull String scanPath,
-        @NotNull String host, int port) {
+        @NotNull String host, int port,
+        int weight) {
 }

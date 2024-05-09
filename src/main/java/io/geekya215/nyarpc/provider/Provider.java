@@ -4,6 +4,7 @@ import io.geekya215.nyarpc.annotation.RpcService;
 import io.geekya215.nyarpc.handler.RpcRequestHandler;
 import io.geekya215.nyarpc.protocal.ProtocolCodec;
 import io.geekya215.nyarpc.protocal.ProtocolFrameDecoder;
+import io.geekya215.nyarpc.registry.Address;
 import io.geekya215.nyarpc.registry.EtcdRegistry;
 import io.geekya215.nyarpc.registry.Registry;
 import io.geekya215.nyarpc.registry.ServiceMeta;
@@ -61,10 +62,12 @@ public final class Provider implements Closeable {
                 for (final Class<?> clazz : classes) {
                     final RpcService annotation = clazz.getAnnotation(RpcService.class);
                     final Class<?> serviceClass = annotation.serviceClass();
+                    final ServiceMeta serviceMeta = new ServiceMeta(serviceClass.getName(), new Address(config.host(), config.port()));
 
-                    registry.register(new ServiceMeta(serviceClass.getName(), config.host() + ":" + config.port()));
+                    registry.register(serviceMeta, config.weight());
                     logger.info("register service {}", serviceClass.getName());
-                    serviceClasses.put(serviceClass.getName(), clazz);
+
+                    serviceClasses.putIfAbsent(serviceClass.getName(), clazz);
                 }
             } catch (IOException | ClassNotFoundException e) {
                 logger.error(e.getMessage());

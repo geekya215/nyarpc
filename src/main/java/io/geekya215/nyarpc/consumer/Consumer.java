@@ -6,6 +6,7 @@ import io.geekya215.nyarpc.handler.RpcResponseHandler;
 import io.geekya215.nyarpc.loadbalance.LoadBalancer;
 import io.geekya215.nyarpc.loadbalance.RoundRobinLoadBalancer;
 import io.geekya215.nyarpc.protocal.*;
+import io.geekya215.nyarpc.registry.Address;
 import io.geekya215.nyarpc.registry.EtcdRegistry;
 import io.geekya215.nyarpc.registry.Instance;
 import io.geekya215.nyarpc.registry.Registry;
@@ -19,6 +20,7 @@ import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.lang.reflect.Proxy;
 import java.util.List;
 import java.util.Map;
@@ -104,9 +106,9 @@ public final class Consumer {
             final Instance instance = loadBalancer.select(serviceClass, candidateInstances);
 
             final Channel channel = channels.computeIfAbsent(instance, inst -> {
-                final String[] addr = inst.endpoint().split(":");
+                final Address address = inst.address();
                 try {
-                    final Channel ch = getChannel(addr[0], Integer.parseInt(addr[1]));
+                    final Channel ch = getChannel(address.host(), address.port());
                     ch.closeFuture().addListener(
                             (ChannelFutureListener) channelFuture -> logger.info("remove idle channel {}", channels.remove(inst)));
                     return ch;
