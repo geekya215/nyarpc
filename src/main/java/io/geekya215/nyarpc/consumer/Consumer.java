@@ -1,6 +1,7 @@
 package io.geekya215.nyarpc.consumer;
 
 import io.geekya215.nyarpc.annotation.RpcReference;
+import io.geekya215.nyarpc.exception.RpcException;
 import io.geekya215.nyarpc.handler.RpcResponseHandler;
 import io.geekya215.nyarpc.loadbalance.LoadBalancer;
 import io.geekya215.nyarpc.loadbalance.RoundRobinLoadBalancer;
@@ -9,10 +10,7 @@ import io.geekya215.nyarpc.registry.EtcdRegistry;
 import io.geekya215.nyarpc.registry.Instance;
 import io.geekya215.nyarpc.registry.Registry;
 import io.netty.bootstrap.Bootstrap;
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelFuture;
-import io.netty.channel.ChannelInitializer;
-import io.netty.channel.ChannelPipeline;
+import io.netty.channel.*;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.logging.LoggingHandler;
@@ -22,7 +20,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.Proxy;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.ServiceLoader;
@@ -36,32 +33,29 @@ public final class Consumer {
     private static final ProtocolCodec CONSUMER_PROTOCOL_CODEC = new ProtocolCodec();
 
     private final @NotNull AtomicLong sequenceGenerator;
-    private final @NotNull Map<@NotNull String, @NotNull List<@NotNull Instance>> services;
-    private final @NotNull Map<@NotNull Class<?>, @NotNull List<@NotNull Channel>> channels;
+    private final @NotNull Map<@NotNull String, @NotNull List<@NotNull Instance>> instances;
+    private final @NotNull Map<@NotNull Instance, @NotNull Channel> channels;
     private final @NotNull Registry registry;
     private final @NotNull LoadBalancer loadBalancer;
 
     public Consumer(@NotNull ConsumerConfig config) {
         this.sequenceGenerator = new AtomicLong(0L);
-        // Todo
-        // use SPI
+
         this.registry = ServiceLoader.load(Registry.class).findFirst().orElse(new EtcdRegistry());
         this.registry.init(config.registryConfig());
 
         this.loadBalancer = ServiceLoader.load(LoadBalancer.class).findFirst().orElse(new RoundRobinLoadBalancer());
 
-        this.services = new ConcurrentHashMap<>();
+        this.instances = new ConcurrentHashMap<>();
         this.channels = new ConcurrentHashMap<>();
 
-        // Todo
-        // use init method
         discoveryService();
     }
 
     private void discoveryService() {
         for (final Map.Entry<String, List<Instance>> entry : registry.discovery().entrySet()) {
             logger.info("discovery {} at {}", entry.getKey(), entry.getValue());
-            services.put(entry.getKey(), entry.getValue());
+            instances.put(entry.getKey(), entry.getValue());
         }
     }
 
@@ -85,9 +79,14 @@ public final class Consumer {
                 })
                 .connect(host, port);
 
-        // Todo
-        // should close eventloop in close future listener
-        return future.sync().channel();
+        logger.info("connect to {}:{}", host, port);
+
+        Channel channel = future.sync().channel();
+        channel.closeFuture().addListener((ChannelFutureListener) channelFuture -> {
+            eventloop.shutdownGracefully();
+        });
+
+        return channel;
     }
 
     @SuppressWarnings("unchecked")
@@ -97,35 +96,35 @@ public final class Consumer {
         final Object o = Proxy.newProxyInstance(classLoader, interfaces, (proxy, method, args) -> {
             final long sequence = nextSequence();
 
-            final List<@NotNull Channel> candidateChannels = channels.computeIfAbsent(serviceClass, clazz -> {
-                final List<@NotNull Instance> instances = services.get(clazz.getName());
-                final List<@NotNull Channel> tmp = new ArrayList<>();
+            final List<@NotNull Instance> candidateInstances = instances.get(serviceClass.getName());
+            if (candidateInstances == null) {
+                throw new RuntimeException("not available service " + serviceClass.getName());
+            }
 
-                for (final Instance instance : instances) {
-                    final String[] addr = instance.endpoint().split(":");
-                    final Channel channel;
+            final Instance instance = loadBalancer.select(serviceClass, candidateInstances);
 
-                    try {
-                        channel = getChannel(addr[0], Integer.parseInt(addr[1]));
-                    } catch (InterruptedException e) {
-                        throw new RuntimeException(e);
-                    }
-
-                    tmp.add(channel);
+            final Channel channel = channels.computeIfAbsent(instance, inst -> {
+                final String[] addr = inst.endpoint().split(":");
+                try {
+                    final Channel ch = getChannel(addr[0], Integer.parseInt(addr[1]));
+                    ch.closeFuture().addListener(
+                            (ChannelFutureListener) channelFuture -> logger.info("remove idle channel {}", channels.remove(inst)));
+                    return ch;
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
                 }
-
-                return tmp;
             });
 
-            final Channel channel = loadBalancer.select(serviceClass, candidateChannels);
-
-            final byte serializer = serviceClass.getAnnotation(RpcReference.class).serializer();
+            final RpcReference annotation = serviceClass.getAnnotation(RpcReference.class);
+            if (annotation == null) {
+                throw new RpcException("Can not proxy class: " + serviceClass.getName() + " without @RpcReference");
+            }
 
             final Header.Builder headerBuilder = new Header.Builder();
             final Header header = headerBuilder
                     .magic(Protocol.MAGIC)
                     .type(MessageType.REQUEST)
-                    .serializer(serializer)
+                    .serializer(annotation.serializer())
                     .sequence(sequence)
                     .build();
 
@@ -138,7 +137,11 @@ public final class Consumer {
                     .args(args)
                     .build();
 
-            channel.writeAndFlush(new Protocol<>(header, rpcRequest));
+            final DefaultChannelPromise defaultChannelPromise = new DefaultChannelPromise(channel);
+
+            channel.writeAndFlush(new Protocol<>(header, rpcRequest), defaultChannelPromise);
+
+            defaultChannelPromise.sync();
 
             final DefaultPromise<Object> promise = new DefaultPromise<>(channel.eventLoop());
 

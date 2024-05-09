@@ -9,34 +9,40 @@ import io.geekya215.nyarpc.registry.Registry;
 import io.geekya215.nyarpc.registry.ServiceMeta;
 import io.geekya215.nyarpc.util.ClassUtil;
 import io.netty.bootstrap.ServerBootstrap;
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelFuture;
-import io.netty.channel.ChannelInitializer;
-import io.netty.channel.ChannelPipeline;
+import io.netty.channel.*;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.logging.LoggingHandler;
+import io.netty.handler.timeout.IdleState;
+import io.netty.handler.timeout.IdleStateEvent;
+import io.netty.handler.timeout.IdleStateHandler;
 import net.openhft.affinity.AffinityStrategies;
 import net.openhft.affinity.AffinityThreadFactory;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
-public final class Provider {
+public final class Provider implements Closeable {
     private static final Logger logger = LoggerFactory.getLogger(Provider.class);
 
+    private static final int DEFAULT_IDLE_TIMEOUT = 10;
     private static final LoggingHandler PROVIDER_LOGGING_HANDLER = new LoggingHandler();
     private static final ProtocolCodec PROVIDER_PROTOCOL_CODEC = new ProtocolCodec();
 
     private final @NotNull Map<@NotNull String, @NotNull Class<?>> serviceClasses;
     private final @NotNull ProviderConfig config;
     private final @NotNull Registry registry;
+    private final @NotNull ScheduledExecutorService serviceKeepAlive;
 
     public Provider(@NotNull ProviderConfig config) {
         this.config = config;
@@ -45,21 +51,28 @@ public final class Provider {
         this.registry.init(config.registryConfig());
 
         this.serviceClasses = new ConcurrentHashMap<>();
+        this.serviceKeepAlive = Executors.newScheduledThreadPool(2);
     }
 
-    public void registerRpcService() throws IOException, ClassNotFoundException {
-        final List<Class<?>> classes = ClassUtil.scanClassesWithAnnotation(config.scanPath(), RpcService.class);
-        for (final Class<?> clazz : classes) {
-            final RpcService annotation = clazz.getAnnotation(RpcService.class);
-            final Class<?> serviceClass = annotation.serviceClass();
+    public void registerRpcService() {
+        serviceKeepAlive.scheduleAtFixedRate(() -> {
+            try {
+                final List<Class<?>> classes = ClassUtil.scanClassesWithAnnotation(config.scanPath(), RpcService.class);
+                for (final Class<?> clazz : classes) {
+                    final RpcService annotation = clazz.getAnnotation(RpcService.class);
+                    final Class<?> serviceClass = annotation.serviceClass();
 
-            registry.register(new ServiceMeta(serviceClass.getName(), config.host() + ":" + config.port()));
-            logger.info("register service {}", serviceClass.getName());
-            serviceClasses.put(serviceClass.getName(), clazz);
-        }
+                    registry.register(new ServiceMeta(serviceClass.getName(), config.host() + ":" + config.port()));
+                    logger.info("register service {}", serviceClass.getName());
+                    serviceClasses.put(serviceClass.getName(), clazz);
+                }
+            } catch (IOException | ClassNotFoundException e) {
+                logger.error(e.getMessage());
+            }
+        }, 0, 10, TimeUnit.SECONDS);
     }
 
-    public void start() throws IOException, ClassNotFoundException {
+    public void start() throws InterruptedException {
         registerRpcService();
 
         final AffinityThreadFactory affinity =
@@ -69,7 +82,8 @@ public final class Provider {
         final NioEventLoopGroup worker = new NioEventLoopGroup(affinity);
 
         try {
-            final ChannelFuture bindFuture = bootstrap.group(boss, worker)
+            final ChannelFuture bindFuture = bootstrap
+                    .group(boss, worker)
                     .channel(NioServerSocketChannel.class)
                     .childHandler(new ChannelInitializer<>() {
                         @Override
@@ -78,18 +92,34 @@ public final class Provider {
                             pipeline.addLast(PROVIDER_LOGGING_HANDLER);
                             pipeline.addLast(new ProtocolFrameDecoder());
                             pipeline.addLast(PROVIDER_PROTOCOL_CODEC);
+                            pipeline.addLast(new IdleStateHandler(DEFAULT_IDLE_TIMEOUT, 0, 0, TimeUnit.SECONDS));
                             pipeline.addLast(new RpcRequestHandler(serviceClasses));
+                            pipeline.addLast(new ChannelInboundHandlerAdapter() {
+                                @Override
+                                public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
+                                    if (evt instanceof IdleStateEvent idle) {
+                                        if (idle.state() == IdleState.READER_IDLE) {
+                                            logger.info("close idle channel {}", ctx.channel());
+                                            ctx.close();
+                                        }
+                                    }
+                                }
+                            });
                         }
                     })
                     .bind(config.port());
+
             bindFuture.sync();
             logger.info("provider start at port: {}", config.port());
             bindFuture.channel().closeFuture().sync();
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
         } finally {
             boss.shutdownGracefully();
             worker.shutdownGracefully();
         }
+    }
+
+    @Override
+    public void close() throws IOException {
+        serviceKeepAlive.shutdownNow();
     }
 }

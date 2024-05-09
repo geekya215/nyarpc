@@ -46,7 +46,7 @@ public final class RpcRequestHandler extends SimpleChannelInboundHandler<Protoco
             responseHeaderBuilder.status(MessageStatus.FAIL);
 
             responseBuilder.type(RpcResponse.RESPONSE_WITH_EXCEPTION);
-            responseBuilder.data(new RpcException("Rpc failed, cause", e));
+            responseBuilder.data(new RpcException("Rpc failed, cause " + e.getCause().toString()));
         }
 
         final Header responseHeader = responseHeaderBuilder.build();
@@ -55,7 +55,8 @@ public final class RpcRequestHandler extends SimpleChannelInboundHandler<Protoco
         ctx.writeAndFlush(new Protocol<>(responseHeader, response));
     }
 
-    private @Nullable Object handle(@NotNull RpcRequest request) throws ClassNotFoundException, NoSuchMethodException, InstantiationException, IllegalAccessException, InvocationTargetException {
+    private @Nullable Object handle(@NotNull RpcRequest request)
+            throws ClassNotFoundException, NoSuchMethodException, InstantiationException, IllegalAccessException, InvocationTargetException {
         final Class<?> clazz = serviceClasses.get(request.serviceName());
         if (clazz == null) {
             throw new ClassNotFoundException(request.serviceName());
