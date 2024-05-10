@@ -20,7 +20,6 @@ import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
 import java.lang.reflect.Proxy;
 import java.util.List;
 import java.util.Map;
@@ -125,8 +124,10 @@ public final class Consumer {
             final Header.Builder headerBuilder = new Header.Builder();
             final Header header = headerBuilder
                     .magic(Protocol.MAGIC)
-                    .type(MessageType.REQUEST)
+                    .type(Type.REQUEST)
                     .serializer(annotation.serializer())
+                    .compress(annotation.compress())
+                    .status(Status.INITIAL)
                     .sequence(sequence)
                     .build();
 

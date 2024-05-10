@@ -2,15 +2,16 @@ package io.geekya215.nyarpc.protocal;
 
 import org.jetbrains.annotations.NotNull;
 
-public record Header(short magic, byte type, byte serializer, byte compress, byte status,
-                     long sequence, int length) {
+import java.util.Objects;
 
+public record Header(short magic, Type type, Serialization serialization, Compress compress, Status status,
+                     long sequence, int length) {
     public static class Builder {
         private short magic;
-        private byte type;
-        private byte serializer;
-        private byte compress;
-        private byte status;
+        private Type type;
+        private Serialization serialization;
+        private Compress compress;
+        private Status status;
         private long sequence;
         private int length;
 
@@ -22,22 +23,22 @@ public record Header(short magic, byte type, byte serializer, byte compress, byt
             return this;
         }
 
-        public @NotNull Builder type(byte type) {
+        public @NotNull Builder type(@NotNull Type type) {
             this.type = type;
             return this;
         }
 
-        public @NotNull Builder serializer(byte serializer) {
-            this.serializer = serializer;
+        public @NotNull Builder serializer(@NotNull Serialization serialization) {
+            this.serialization = serialization;
             return this;
         }
 
-        public @NotNull Builder compress(byte compress) {
+        public @NotNull Builder compress(@NotNull Compress compress) {
             this.compress = compress;
             return this;
         }
 
-        public @NotNull Builder status(byte status) {
+        public @NotNull Builder status(@NotNull Status status) {
             this.status = status;
             return this;
         }
@@ -53,7 +54,11 @@ public record Header(short magic, byte type, byte serializer, byte compress, byt
         }
 
         public @NotNull Header build() {
-            return new Header(magic, type, serializer, compress, status, sequence, length);
+            Objects.requireNonNull(type, "type must not be null");
+            Objects.requireNonNull(serialization, "serializer must not be null");
+            Objects.requireNonNull(compress, "compress must not be null");
+            Objects.requireNonNull(status, "status must not be null");
+            return new Header(magic, type, serialization, compress, status, sequence, length);
         }
     }
 }

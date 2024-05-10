@@ -19,14 +19,14 @@ public final class ProtocolCodec extends MessageToMessageCodec<ByteBuf, Protocol
 
         buf.writeShort(header.magic());
 
-        buf.writeByte(header.type());
-        buf.writeByte(header.serializer());
-        buf.writeByte(header.compress());
-        buf.writeByte(header.status());
+        buf.writeByte(header.type().getValue());
+        buf.writeByte(header.serialization().getValue());
+        buf.writeByte(header.compress().getValue());
+        buf.writeByte(header.status().getValue());
 
         buf.writeLong(header.sequence());
 
-        final Serializer serializer = SerializerFactory.getSerializer(header.serializer());
+        final Serializer serializer = SerializerFactory.getSerializer(header.serialization());
         final byte[] bodyByteArray = serializer.serialize(body);
         buf.writeInt(bodyByteArray.length);
         buf.writeBytes(bodyByteArray);
@@ -43,32 +43,31 @@ public final class ProtocolCodec extends MessageToMessageCodec<ByteBuf, Protocol
 
         final Header.Builder headerBuilder = new Header.Builder();
 
-        final byte type = byteBuf.readByte();
+        final byte typeValue = byteBuf.readByte();
         final byte serialization = byteBuf.readByte();
-        final byte compress = byteBuf.readByte();
-        final byte status = byteBuf.readByte();
+        final byte compressValue = byteBuf.readByte();
+        final byte statusValue = byteBuf.readByte();
         final long sequence = byteBuf.readLong();
 
         final int length = byteBuf.readInt();
         final byte[] bodyByteArray = new byte[length];
         byteBuf.readBytes(bodyByteArray);
 
-        final Serializer serializer = SerializerFactory.getSerializer(serialization);
+        final Serializer serializer = SerializerFactory.getSerializer(Serialization.getSerializer(serialization));
 
-        final Class<?> dt = switch (type) {
-            case MessageType.REQUEST -> RpcRequest.class;
-            case MessageType.RESPONSE -> RpcResponse.class;
-            default -> throw new IllegalArgumentException("unsupported protocol type: " + type);
+        final Class<?> dt = switch (Type.getType(typeValue)) {
+            case REQUEST -> RpcRequest.class;
+            case RESPONSE -> RpcResponse.class;
         };
 
         final Object body = serializer.deserialize(bodyByteArray, dt);
 
         final Header header = headerBuilder
                 .magic(Protocol.MAGIC)
-                .type(type)
-                .serializer(serialization)
-                .compress(compress)
-                .status(status)
+                .type(Type.getType(typeValue))
+                .serializer(Serialization.getSerializer(serialization))
+                .compress(Compress.getNoCompress(compressValue))
+                .status(Status.getStatus(statusValue))
                 .sequence(sequence)
                 .length(length)
                 .build();

@@ -1,9 +1,9 @@
 package io.geekya215.nyarpc.handler;
 
 import io.geekya215.nyarpc.protocal.Header;
-import io.geekya215.nyarpc.protocal.MessageStatus;
 import io.geekya215.nyarpc.protocal.Protocol;
 import io.geekya215.nyarpc.protocal.RpcResponse;
+import io.geekya215.nyarpc.protocal.Status;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.util.concurrent.Promise;
@@ -22,7 +22,7 @@ public final class RpcResponseHandler extends SimpleChannelInboundHandler<Protoc
         final Promise<Object> promise = PROMISE_RESULTS.remove(header.sequence());
 
         if (promise != null) {
-            if (header.status() == MessageStatus.SUCCESS) {
+            if (header.status() == Status.SUCCESS) {
                 promise.setSuccess(response.data());
             } else {
                 promise.setFailure((Throwable) response.data());

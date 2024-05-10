@@ -27,8 +27,8 @@ public final class RpcRequestHandler extends SimpleChannelInboundHandler<Protoco
 
         responseHeaderBuilder
                 .magic(Protocol.MAGIC)
-                .type(MessageType.RESPONSE)
-                .serializer(requestHeader.serializer())
+                .type(Type.RESPONSE)
+                .serializer(requestHeader.serialization())
                 .compress(requestHeader.compress())
                 .sequence(requestHeader.sequence());
 
@@ -40,10 +40,10 @@ public final class RpcRequestHandler extends SimpleChannelInboundHandler<Protoco
                 responseBuilder.type(RpcResponse.RESPONSE_VALUE);
             }
 
-            responseHeaderBuilder.status(MessageStatus.SUCCESS);
+            responseHeaderBuilder.status(Status.SUCCESS);
             responseBuilder.data(responseData);
         } catch (Exception e) {
-            responseHeaderBuilder.status(MessageStatus.FAIL);
+            responseHeaderBuilder.status(Status.FAIL);
 
             responseBuilder.type(RpcResponse.RESPONSE_WITH_EXCEPTION);
             responseBuilder.data(new RpcException("Rpc failed, cause " + e.getCause().toString()));
