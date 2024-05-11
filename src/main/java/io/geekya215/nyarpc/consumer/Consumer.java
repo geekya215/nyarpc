@@ -51,6 +51,7 @@ public final class Consumer {
         this.channels = new ConcurrentHashMap<>();
 
         discoveryService();
+        registry.watch(instances);
     }
 
     private void discoveryService() {
@@ -109,7 +110,7 @@ public final class Consumer {
                 try {
                     final Channel ch = getChannel(address.host(), address.port());
                     ch.closeFuture().addListener(
-                            (ChannelFutureListener) channelFuture -> logger.info("remove idle channel {}", channels.remove(inst)));
+                            (ChannelFutureListener) channelFuture -> logger.info("remove closed channel {}", channels.remove(inst)));
                     return ch;
                 } catch (InterruptedException e) {
                     throw new RuntimeException(e);

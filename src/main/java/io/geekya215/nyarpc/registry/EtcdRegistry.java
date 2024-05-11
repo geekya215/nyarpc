@@ -1,18 +1,19 @@
 package io.geekya215.nyarpc.registry;
 
-import io.etcd.jetcd.ByteSequence;
-import io.etcd.jetcd.Client;
-import io.etcd.jetcd.KV;
-import io.etcd.jetcd.Lease;
+import io.etcd.jetcd.*;
 import io.etcd.jetcd.kv.GetResponse;
 import io.etcd.jetcd.options.GetOption;
 import io.etcd.jetcd.options.PutOption;
+import io.etcd.jetcd.options.WatchOption;
+import io.etcd.jetcd.watch.WatchEvent;
+import io.geekya215.nyarpc.util.Pair;
 import io.geekya215.nyarpc.exception.RegistryException;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
@@ -31,8 +32,18 @@ public final class EtcdRegistry implements Registry {
     public EtcdRegistry() {
     }
 
-    private String buildServiceKey(@NotNull ServiceMeta serviceMeta) {
+    private @NotNull String buildServiceKey(@NotNull ServiceMeta serviceMeta) {
         return RPC_NAMESPACE + NAMESPACE_DELIMITER + serviceMeta.serviceName() + "=" + serviceMeta.address().resolve();
+    }
+
+    private @NotNull ServiceMeta parseServiceKey(@NotNull String serviceKey) {
+        final String[] part = serviceKey.substring(RPC_NAMESPACE.length() + 1).split("=");
+        if (part.length != 2) {
+            throw new IllegalArgumentException();
+        }
+        final String serviceName = part[0];
+        final Address address = Address.from(part[1]);
+        return new ServiceMeta(serviceName, address);
     }
 
     @Override
@@ -78,18 +89,65 @@ public final class EtcdRegistry implements Registry {
             final GetResponse response = kv.get(ByteSequence.from(key.getBytes()), getOption).get();
 
             final Map<String, List<Instance>> result = response.getKvs().stream()
-                    .map(s -> s.getKey().toString())
-                    .map(s -> s.substring(RPC_NAMESPACE.length() + 1))
-                    .map(s -> s.split("="))
-                    .filter(s -> s.length == 2)
+                    .map(keyValue -> {
+                        final ServiceMeta serviceMeta = parseServiceKey(keyValue.getKey().toString());
+                        final int weight = Integer.parseInt(keyValue.getValue().toString());
+                        final Instance instance = new Instance(serviceMeta.address(), weight);
+                        final String serviceName = serviceMeta.serviceName();
+                        return new Pair<>(serviceName, instance);
+                    })
                     .collect(Collectors.groupingBy(
-                            s -> s[0],
-                            Collectors.mapping(s -> new Instance(Address.from(s[1]), 0), Collectors.toList())));
+                            Pair::fst,
+                            Collectors.mapping(Pair::snd, Collectors.toList())
+                    ));
 
             return result;
         } catch (ExecutionException | InterruptedException e) {
             throw new RegistryException("discovery service failed, cause: ", e);
         }
+    }
+
+    @Override
+    public void watch(@NotNull Map<@NotNull String, @NotNull List<@NotNull Instance>> instances) {
+        // Todo
+        // consider move to class field?
+        final Watch watchClient = client.getWatchClient();
+        final WatchOption watchOption = WatchOption.builder().isPrefix(true).withPrevKV(true).build();
+
+        watchClient.watch(ByteSequence.from((RPC_NAMESPACE + NAMESPACE_DELIMITER).getBytes()), watchOption, watchResponse -> {
+            for (final WatchEvent event : watchResponse.getEvents()) {
+                final WatchEvent.EventType eventType = event.getEventType();
+                final KeyValue keyValue = event.getKeyValue();
+                final KeyValue prevKeyValue = event.getPrevKV();
+
+                if (eventType == WatchEvent.EventType.PUT) {
+                    if (event.getPrevKV().getKey().isEmpty()) {
+                        final String keyString = keyValue.getKey().toString();
+                        final String valueString = keyValue.getValue().toString();
+                        final ServiceMeta serviceMeta = parseServiceKey(keyString);
+                        log.info("discovery new service {}", serviceMeta);
+
+                        final String serviceName = serviceMeta.serviceName();
+                        final Instance instance = new Instance(serviceMeta.address(), Integer.parseInt(valueString));
+
+                        instances.putIfAbsent(serviceName, new ArrayList<>());
+                        instances.get(serviceName).add(instance);
+
+                    }
+                } else if (eventType == WatchEvent.EventType.DELETE) {
+                    final String prevKeyString = prevKeyValue.getKey().toString();
+                    final String prevValueString = prevKeyValue.getValue().toString();
+
+                    final ServiceMeta serviceMeta = parseServiceKey(prevKeyString);
+                    log.info("remove unregistered service {}", serviceMeta);
+
+                    final String serviceName = serviceMeta.serviceName();
+                    final Instance instance = new Instance(serviceMeta.address(), Integer.parseInt(prevValueString));
+
+                    instances.get(serviceName).remove(instance);
+                }
+            }
+        });
     }
 
     @Override

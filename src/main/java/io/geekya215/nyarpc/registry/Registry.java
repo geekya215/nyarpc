@@ -16,4 +16,6 @@ public interface Registry extends Closeable {
     void unregister(@NotNull ServiceMeta serviceMeta);
 
     @NotNull Map<@NotNull String, @NotNull List<@NotNull Instance>> discovery();
+
+    void watch(@NotNull Map<@NotNull String, @NotNull List<@NotNull Instance>> instances);
 }

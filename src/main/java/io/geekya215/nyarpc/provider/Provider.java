@@ -124,5 +124,9 @@ public final class Provider implements Closeable {
     @Override
     public void close() throws IOException {
         serviceKeepAlive.shutdownNow();
+
+        for (final String serviceName : serviceClasses.keySet()) {
+            registry.unregister(new ServiceMeta(serviceName, new Address(config.host(), config.port())));
+        }
     }
 }
