@@ -17,6 +17,7 @@ import io.netty.handler.logging.LoggingHandler;
 import io.netty.handler.timeout.IdleState;
 import io.netty.handler.timeout.IdleStateEvent;
 import io.netty.handler.timeout.IdleStateHandler;
+import io.netty.handler.traffic.ChannelTrafficShapingHandler;
 import net.openhft.affinity.AffinityStrategies;
 import net.openhft.affinity.AffinityThreadFactory;
 import org.jetbrains.annotations.NotNull;
@@ -34,9 +35,12 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 public final class Provider implements Closeable {
-    private static final Logger logger = LoggerFactory.getLogger(Provider.class);
+    static final int DEFAULT_IDLE_TIMEOUT = 10;
+    static final int DEFAULT_WRITE_LIMIT = 1024 * 1024; // 1 MB
+    static final int DEFAULT_READ_LIMIT = 1024 * 1024; // 1 MB
+    static final int DEFAULT_CHECK_INTERVAL = 1000; // 1000 ms
 
-    private static final int DEFAULT_IDLE_TIMEOUT = 10;
+    private static final Logger logger = LoggerFactory.getLogger(Provider.class);
     private static final LoggingHandler PROVIDER_LOGGING_HANDLER = new LoggingHandler();
     private static final ProtocolCodec PROVIDER_PROTOCOL_CODEC = new ProtocolCodec();
 
@@ -91,6 +95,8 @@ public final class Provider implements Closeable {
                         @Override
                         protected void initChannel(Channel ch) throws Exception {
                             final ChannelPipeline pipeline = ch.pipeline();
+
+                            pipeline.addLast(new ChannelTrafficShapingHandler(DEFAULT_WRITE_LIMIT, DEFAULT_READ_LIMIT, DEFAULT_CHECK_INTERVAL));
                             pipeline.addLast(PROVIDER_LOGGING_HANDLER);
                             pipeline.addLast(new ProtocolFrameDecoder());
                             pipeline.addLast(PROVIDER_PROTOCOL_CODEC);
