@@ -14,4 +14,6 @@ public @interface RpcReference {
     Serialization serializer() default Serialization.JDK;
 
     Compress compress() default Compress.NO_COMPRESS;
+
+    int timeout() default 3;
 }

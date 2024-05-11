@@ -56,27 +56,26 @@ public final class Provider implements Closeable {
     }
 
     public void registerRpcService() {
-        serviceKeepAlive.scheduleAtFixedRate(() -> {
-            try {
-                final List<Class<?>> classes = ClassUtil.scanClassesWithAnnotation(config.scanPath(), RpcService.class);
-                for (final Class<?> clazz : classes) {
-                    final RpcService annotation = clazz.getAnnotation(RpcService.class);
-                    final Class<?> serviceClass = annotation.serviceClass();
-                    final ServiceMeta serviceMeta = new ServiceMeta(serviceClass.getName(), new Address(config.host(), config.port()));
+        try {
+            final List<Class<?>> classes = ClassUtil.scanClassesWithAnnotation(config.scanPath(), RpcService.class);
+            for (final Class<?> clazz : classes) {
+                final RpcService annotation = clazz.getAnnotation(RpcService.class);
+                final Class<?> serviceClass = annotation.serviceClass();
+                final ServiceMeta serviceMeta = new ServiceMeta(serviceClass.getName(), new Address(config.host(), config.port()));
 
-                    registry.register(serviceMeta, config.weight());
-                    logger.info("register service {}", serviceClass.getName());
+                registry.register(serviceMeta, config.weight());
+                logger.info("register service {}", serviceClass.getName());
 
-                    serviceClasses.putIfAbsent(serviceClass.getName(), clazz);
-                }
-            } catch (IOException | ClassNotFoundException e) {
-                logger.error(e.getMessage());
+                serviceClasses.putIfAbsent(serviceClass.getName(), clazz);
             }
-        }, 0, 10, TimeUnit.SECONDS);
+        } catch (IOException | ClassNotFoundException e) {
+            logger.error("register local service failed, cause: {}", e.getMessage());
+        }
     }
 
     public void start() throws InterruptedException {
         registerRpcService();
+        serviceKeepAlive.scheduleAtFixedRate(this::registerRpcService, 10, 10, TimeUnit.SECONDS);
 
         final AffinityThreadFactory affinity =
                 new AffinityThreadFactory("affinity", AffinityStrategies.DIFFERENT_CORE, AffinityStrategies.DIFFERENT_SOCKET);

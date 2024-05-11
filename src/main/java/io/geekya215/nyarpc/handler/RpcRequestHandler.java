@@ -46,7 +46,7 @@ public final class RpcRequestHandler extends SimpleChannelInboundHandler<Protoco
             responseHeaderBuilder.status(Status.FAIL);
 
             responseBuilder.type(RpcResponse.RESPONSE_WITH_EXCEPTION);
-            responseBuilder.data(new RpcException("Rpc failed, cause " + e.getCause().toString()));
+            responseBuilder.data(new RpcException("Rpc failed, cause " + e.getCause()));
         }
 
         final Header responseHeader = responseHeaderBuilder.build();

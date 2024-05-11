@@ -1,5 +1,8 @@
 package io.geekya215.nyarpc.consumer;
 
+import dev.failsafe.Failsafe;
+import dev.failsafe.RetryPolicy;
+import dev.failsafe.Timeout;
 import io.geekya215.nyarpc.annotation.RpcReference;
 import io.geekya215.nyarpc.exception.RpcException;
 import io.geekya215.nyarpc.handler.RpcResponseHandler;
@@ -21,6 +24,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.Proxy;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.ServiceLoader;
@@ -65,30 +69,35 @@ public final class Consumer {
         final Bootstrap bootstrap = new Bootstrap();
         final NioEventLoopGroup eventloop = new NioEventLoopGroup();
 
-        final ChannelFuture future = bootstrap
-                .group(eventloop)
-                .channel(NioSocketChannel.class)
-                .handler(new ChannelInitializer<>() {
-                    @Override
-                    protected void initChannel(Channel ch) throws Exception {
-                        ChannelPipeline pipeline = ch.pipeline();
+        try {
+            final ChannelFuture future = bootstrap
+                    .group(eventloop)
+                    .channel(NioSocketChannel.class)
+                    .handler(new ChannelInitializer<>() {
+                        @Override
+                        protected void initChannel(Channel ch) throws Exception {
+                            ChannelPipeline pipeline = ch.pipeline();
 
-                        pipeline.addLast(CONSUMER_LOGGING_HANDLER);
-                        pipeline.addLast(new ProtocolFrameDecoder());
-                        pipeline.addLast(CONSUMER_PROTOCOL_CODEC);
-                        pipeline.addLast(new RpcResponseHandler());
-                    }
-                })
-                .connect(host, port);
+                            pipeline.addLast(CONSUMER_LOGGING_HANDLER);
+                            pipeline.addLast(new ProtocolFrameDecoder());
+                            pipeline.addLast(CONSUMER_PROTOCOL_CODEC);
+                            pipeline.addLast(new RpcResponseHandler());
+                        }
+                    })
+                    .connect(host, port);
 
-        logger.info("connect to {}:{}", host, port);
+            logger.info("connect to {}:{}", host, port);
 
-        Channel channel = future.sync().channel();
-        channel.closeFuture().addListener((ChannelFutureListener) channelFuture -> {
+            final Channel channel = future.sync().channel();
+            channel.closeFuture().addListener((ChannelFutureListener) channelFuture -> {
+                eventloop.shutdownGracefully();
+            });
+
+            return channel;
+        } catch (InterruptedException e) {
             eventloop.shutdownGracefully();
-        });
-
-        return channel;
+            throw e;
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -96,6 +105,12 @@ public final class Consumer {
         final ClassLoader classLoader = serviceClass.getClassLoader();
         final Class<?>[] interfaces = {serviceClass};
         final Object o = Proxy.newProxyInstance(classLoader, interfaces, (proxy, method, args) -> {
+
+            final RpcReference annotation = serviceClass.getAnnotation(RpcReference.class);
+            if (annotation == null) {
+                throw new RpcException("Can not proxy class: " + serviceClass.getName() + " without @RpcReference");
+            }
+
             final long sequence = nextSequence();
 
             final List<@NotNull Instance> candidateInstances = instances.get(serviceClass.getName());
@@ -107,20 +122,18 @@ public final class Consumer {
 
             final Channel channel = channels.computeIfAbsent(instance, inst -> {
                 final Address address = inst.address();
-                try {
-                    final Channel ch = getChannel(address.host(), address.port());
-                    ch.closeFuture().addListener(
-                            (ChannelFutureListener) channelFuture -> logger.info("remove closed channel {}", channels.remove(inst)));
-                    return ch;
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
-                }
-            });
 
-            final RpcReference annotation = serviceClass.getAnnotation(RpcReference.class);
-            if (annotation == null) {
-                throw new RpcException("Can not proxy class: " + serviceClass.getName() + " without @RpcReference");
-            }
+                final RetryPolicy<Object> retryPolicy = RetryPolicy.builder()
+                        .withMaxRetries(3)
+                        .withDelay(Duration.ofSeconds(1))
+                        .onRetry(e -> logger.info("connect to {}:{} failed, {} time(s) try to reconnect...", address.host(), address.port(), e.getAttemptCount()))
+                        .build();
+
+                final Channel ch = Failsafe.with(retryPolicy).get(() -> getChannel(address.host(), address.port()));
+                ch.closeFuture().addListener(
+                        (ChannelFutureListener) channelFuture -> logger.info("remove closed channel {}", channels.remove(inst)));
+                return ch;
+            });
 
             final Header.Builder headerBuilder = new Header.Builder();
             final Header header = headerBuilder
@@ -151,7 +164,10 @@ public final class Consumer {
 
             RpcResponseHandler.PROMISE_RESULTS.put(sequence, promise);
 
-            promise.await();
+            final Timeout<Object> timeout = Timeout.builder(Duration.ofSeconds(annotation.timeout())).build();
+
+            Failsafe.with(timeout)
+                    .run(() -> promise.await());
 
             if (promise.isSuccess()) {
                 return promise.getNow();
