@@ -7,6 +7,7 @@ import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
+import java.util.concurrent.TimeUnit;
 
 @Target({ElementType.TYPE})
 @Retention(RetentionPolicy.RUNTIME)
@@ -16,4 +17,6 @@ public @interface RpcReference {
     Compress compress() default Compress.NO_COMPRESS;
 
     int timeout() default 3;
+
+    TimeUnit unit() default TimeUnit.SECONDS;
 }

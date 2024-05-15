@@ -1,6 +1,7 @@
 package io.geekya215.nyarpc.consumer;
 
 import dev.failsafe.*;
+import io.geekya215.nyarpc.annotation.Retryable;
 import io.geekya215.nyarpc.annotation.RpcReference;
 import io.geekya215.nyarpc.exception.RpcException;
 import io.geekya215.nyarpc.handler.RpcResponseHandler;
@@ -18,11 +19,14 @@ import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.logging.LoggingHandler;
 import io.netty.util.concurrent.DefaultPromise;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.ServiceLoader;
@@ -61,7 +65,7 @@ public final class Consumer {
 
     private void discoveryService() {
         for (final Map.Entry<String, List<Instance>> entry : registry.discovery().entrySet()) {
-            logger.info("discovery {} at {}", entry.getKey(), entry.getValue());
+            logger.info("Discovery {} at {}", entry.getKey(), entry.getValue());
             instances.put(entry.getKey(), entry.getValue());
         }
     }
@@ -87,7 +91,7 @@ public final class Consumer {
                     })
                     .connect(host, port);
 
-            logger.info("connect to {}:{}", host, port);
+            logger.info("Connect to {}:{}", host, port);
 
             final Channel channel = future.sync().channel();
             channel.closeFuture().addListener((ChannelFutureListener) channelFuture -> {
@@ -107,95 +111,125 @@ public final class Consumer {
         final Class<?>[] interfaces = {serviceClass};
         final Object o = Proxy.newProxyInstance(classLoader, interfaces, (proxy, method, args) -> {
 
-            final RpcReference annotation = serviceClass.getAnnotation(RpcReference.class);
-            if (annotation == null) {
+            final RpcReference rpcReference = serviceClass.getAnnotation(RpcReference.class);
+            if (rpcReference == null) {
                 throw new RpcException("Can not proxy class: " + serviceClass.getName() + " without @RpcReference");
             }
 
-            final long sequence = nextSequence();
-
             final List<@NotNull Instance> candidateInstances = instances.get(serviceClass.getName());
             if (candidateInstances == null || candidateInstances.isEmpty()) {
-                throw new RuntimeException("not available service " + serviceClass.getName());
+                throw new RuntimeException("No available service " + serviceClass.getName());
             }
 
             final Instance instance = loadBalancer.select(serviceClass, candidateInstances);
+            final Retryable retry = serviceClass.getAnnotation(Retryable.class);
+            final io.geekya215.nyarpc.annotation.CircuitBreaker circuit = serviceClass.getAnnotation(io.geekya215.nyarpc.annotation.CircuitBreaker.class);
 
-            final CircuitBreaker<Object> cb = circuitBreakers.computeIfAbsent(
-                    instance,
-                    inst -> CircuitBreaker.builder()
-                            .withFailureThreshold(3)
-                            .withSuccessThreshold(2)
-                            .withDelay(Duration.ofSeconds(3))
-                            .onClose(e -> logger.info("circuit breaker#{} is closed", inst))
-                            .onHalfOpen(e -> logger.info("circuit breaker#{} is half opened", inst))
-                            .onOpen(e -> logger.warn("circuit breaker#{} is opened", inst))
-                            .build());
+            final List<@NotNull Policy<Object>> policies = new ArrayList<>();
 
-            Object result = Failsafe
-                    .with(cb)
-                    .get(() -> {
-                        final Channel channel = channels.computeIfAbsent(instance, inst -> {
-                            final Address address = inst.address();
+            if (retry != null) {
+                final RetryPolicy<Object> retryPolicy = RetryPolicy.builder()
+                        .handle(retry.retryFor())
+                        .withMaxRetries(retry.maxRetries())
+                        .withDelay(Duration.of(retry.delay(), retry.unit()))
+                        .onRetry(e -> logger.warn("Rpc call failed, retry {} times(s), caused: {}", e.getAttemptCount(), e.getLastException().getMessage()))
+                        .onFailure(e -> logger.error("Retry failed, caused: ", e.getException()))
+                        .build();
 
-                            final RetryPolicy<Object> retryPolicy = RetryPolicy.builder()
-                                    .withMaxRetries(3)
-                                    .withDelay(Duration.ofSeconds(1))
-                                    .onRetry(e -> logger.info("connect to {}:{} failed, {} time(s) try to reconnect...", address.host(), address.port(), e.getAttemptCount()))
-                                    .build();
+                policies.add(retryPolicy);
+            }
 
-                            final Channel ch = Failsafe.with(retryPolicy).get(() -> getChannel(address.host(), address.port()));
-                            ch.closeFuture().addListener(
-                                    (ChannelFutureListener) channelFuture -> logger.info("remove closed channel {}", channels.remove(inst)));
-                            return ch;
-                        });
+            if (circuit != null) {
+                final CircuitBreaker<Object> cb = circuitBreakers.computeIfAbsent(
+                        instance,
+                        inst -> CircuitBreaker.builder()
+                                .withFailureThreshold(circuit.failureThreshold())
+                                .withSuccessThreshold(circuit.successThreshold())
+                                .withDelay(Duration.of(circuit.delay(), circuit.unit()))
+                                .onClose(e -> logger.info("Circuit breaker for #{} is closed", inst))
+                                .onHalfOpen(e -> logger.info("Circuit breaker for #{} is half opened", inst))
+                                .onOpen(e -> logger.warn("Circuit breaker for #{} is opened", inst))
+                                .build());
 
-                        final Header.Builder headerBuilder = new Header.Builder();
-                        final Header header = headerBuilder
-                                .magic(Protocol.MAGIC)
-                                .type(Type.REQUEST)
-                                .serializer(annotation.serializer())
-                                .compress(annotation.compress())
-                                .status(Status.INITIAL)
-                                .sequence(sequence)
-                                .build();
+                policies.add(cb);
+            }
 
-                        final RpcRequest.Builder requestBuilder = new RpcRequest.Builder();
-                        final RpcRequest rpcRequest = requestBuilder
-                                .serviceName(serviceClass.getName())
-                                .methodName(method.getName())
-                                .returnType(method.getReturnType())
-                                .parameterTypes(method.getParameterTypes())
-                                .args(args)
-                                .build();
+            final FailsafeExecutor<Object> failsafe = policies.isEmpty() ? Failsafe.none() : Failsafe.with(policies);
 
-                        final DefaultChannelPromise defaultChannelPromise = new DefaultChannelPromise(channel);
-
-                        channel.writeAndFlush(new Protocol<>(header, rpcRequest), defaultChannelPromise);
-
-                        defaultChannelPromise.sync();
-
-                        final DefaultPromise<Object> promise = new DefaultPromise<>(channel.eventLoop());
-
-                        RpcResponseHandler.PROMISE_RESULTS.put(sequence, promise);
-
-                        promise.await(annotation.timeout(), TimeUnit.SECONDS);
-
-                        if (promise.isSuccess()) {
-                            return promise.getNow();
-                        } else {
-                            if (!promise.isDone()) {
-                                promise.cancel(true);
-                                throw new TimeoutExceededException(Timeout.of(Duration.ofSeconds(annotation.timeout())));
-                            } else {
-                                throw new RuntimeException(promise.cause());
-                            }
-                        }
-                    });
+            final Object result = failsafe.get(() -> doProxy(instance, rpcReference, serviceClass, method, args));
 
             return result;
         });
         return (T) o;
+    }
+
+    private @Nullable Object doProxy(
+            @NotNull Instance instance,
+            @NotNull RpcReference rpcReference,
+            @NotNull Class<?> serviceClass,
+            @NotNull Method method,
+            @Nullable Object @Nullable [] args
+    ) throws InterruptedException {
+        final long sequence = nextSequence();
+
+        final Channel channel = channels.computeIfAbsent(instance, inst -> {
+            try {
+                return addChannel(inst);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        final Header.Builder headerBuilder = new Header.Builder();
+        final Header header = headerBuilder
+                .magic(Protocol.MAGIC)
+                .type(Type.REQUEST)
+                .serializer(rpcReference.serializer())
+                .compress(rpcReference.compress())
+                .status(Status.INITIAL)
+                .sequence(sequence)
+                .build();
+
+        final RpcRequest.Builder requestBuilder = new RpcRequest.Builder();
+        final RpcRequest rpcRequest = requestBuilder
+                .serviceName(serviceClass.getName())
+                .methodName(method.getName())
+                .returnType(method.getReturnType())
+                .parameterTypes(method.getParameterTypes())
+                .args(args)
+                .build();
+
+        final DefaultChannelPromise defaultChannelPromise = new DefaultChannelPromise(channel);
+
+        channel.writeAndFlush(new Protocol<>(header, rpcRequest), defaultChannelPromise);
+
+        defaultChannelPromise.sync();
+
+        final DefaultPromise<Object> promise = new DefaultPromise<>(channel.eventLoop());
+
+        RpcResponseHandler.PROMISE_RESULTS.put(sequence, promise);
+
+        promise.await(rpcReference.timeout(), rpcReference.unit());
+
+        if (promise.isSuccess()) {
+            return promise.getNow();
+        } else {
+            if (!promise.isDone()) {
+                promise.cancel(true);
+                throw new RuntimeException("Rpc call timeout");
+            } else {
+                throw new RuntimeException(promise.cause());
+            }
+        }
+    }
+
+    private @NotNull Channel addChannel(@NotNull Instance inst) throws InterruptedException {
+        final Address address = inst.address();
+
+        final Channel ch = getChannel(address.host(), address.port());
+        ch.closeFuture().addListener(
+                (ChannelFutureListener) channelFuture -> logger.info("Remove closed channel {}", channels.remove(inst)));
+        return ch;
     }
 
     private long nextSequence() {
