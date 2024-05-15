@@ -1,6 +1,8 @@
 package io.geekya215.nyarpc.provider;
 
 import io.geekya215.nyarpc.annotation.RpcService;
+import io.geekya215.nyarpc.handler.ExceptionHandler;
+import io.geekya215.nyarpc.handler.IdleHandler;
 import io.geekya215.nyarpc.handler.RpcRequestHandler;
 import io.geekya215.nyarpc.protocal.ProtocolCodec;
 import io.geekya215.nyarpc.protocal.ProtocolFrameDecoder;
@@ -11,11 +13,9 @@ import io.geekya215.nyarpc.registry.ServiceMeta;
 import io.geekya215.nyarpc.util.ClassUtil;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.*;
-import io.netty.channel.nio.NioEventLoopGroup;
-import io.netty.channel.socket.nio.NioServerSocketChannel;
+import io.netty.channel.epoll.EpollEventLoopGroup;
+import io.netty.channel.epoll.EpollServerSocketChannel;
 import io.netty.handler.logging.LoggingHandler;
-import io.netty.handler.timeout.IdleState;
-import io.netty.handler.timeout.IdleStateEvent;
 import io.netty.handler.timeout.IdleStateHandler;
 import io.netty.handler.traffic.ChannelTrafficShapingHandler;
 import net.openhft.affinity.AffinityStrategies;
@@ -35,10 +35,12 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 public final class Provider implements Closeable {
-    static final int DEFAULT_IDLE_TIMEOUT = 10;
+    static final int DEFAULT_WEIGHT = 1;
+    static final int DEFAULT_READ_IDLE_TIMEOUT = 10000;
+    static final int DEFAULT_SERVICE_HEARTBEAT_INTERVAL = 10000;
     static final int DEFAULT_WRITE_LIMIT = 1024 * 1024; // 1 MB
     static final int DEFAULT_READ_LIMIT = 1024 * 1024; // 1 MB
-    static final int DEFAULT_CHECK_INTERVAL = 1000; // 1000 ms
+    static final int DEFAULT_TRAFFIC_CHECK_INTERVAL = 1000; // 1000 ms
 
     private static final Logger logger = LoggerFactory.getLogger(Provider.class);
     private static final LoggingHandler PROVIDER_LOGGING_HANDLER = new LoggingHandler();
@@ -78,41 +80,41 @@ public final class Provider implements Closeable {
     }
 
     public void start() throws InterruptedException {
+        // initial service
         registerRpcService();
-        serviceKeepAlive.scheduleAtFixedRate(this::registerRpcService, 10, 10, TimeUnit.SECONDS);
 
+        // heartbeat
+        serviceKeepAlive.scheduleAtFixedRate(
+                this::registerRpcService,
+                config.serviceHeartbeatInterval(),
+                config.serviceHeartbeatInterval(),
+                TimeUnit.MILLISECONDS);
+
+        // bind core
         final AffinityThreadFactory affinity =
                 new AffinityThreadFactory("affinity", AffinityStrategies.DIFFERENT_CORE, AffinityStrategies.DIFFERENT_SOCKET);
+
         final ServerBootstrap bootstrap = new ServerBootstrap();
-        final NioEventLoopGroup boss = new NioEventLoopGroup();
-        final NioEventLoopGroup worker = new NioEventLoopGroup(affinity);
+        final EpollEventLoopGroup boss = new EpollEventLoopGroup();
+        final EpollEventLoopGroup worker = new EpollEventLoopGroup(affinity);
 
         try {
             final ChannelFuture bindFuture = bootstrap
                     .group(boss, worker)
-                    .channel(NioServerSocketChannel.class)
+                    .channel(EpollServerSocketChannel.class)
                     .childHandler(new ChannelInitializer<>() {
                         @Override
                         protected void initChannel(Channel ch) throws Exception {
                             final ChannelPipeline pipeline = ch.pipeline();
 
-                            pipeline.addLast(new ChannelTrafficShapingHandler(DEFAULT_WRITE_LIMIT, DEFAULT_READ_LIMIT, DEFAULT_CHECK_INTERVAL));
+                            pipeline.addLast(new ChannelTrafficShapingHandler(config.writeLimit(), config.readLimit(), config.trafficCheckInterval()));
                             pipeline.addLast(PROVIDER_LOGGING_HANDLER);
                             pipeline.addLast(new ProtocolFrameDecoder());
                             pipeline.addLast(PROVIDER_PROTOCOL_CODEC);
-                            pipeline.addLast(new IdleStateHandler(DEFAULT_IDLE_TIMEOUT, 0, 0, TimeUnit.SECONDS));
+                            pipeline.addLast(new IdleStateHandler(config.readIdleTimeout(), 0, 0, TimeUnit.MILLISECONDS));
                             pipeline.addLast(new RpcRequestHandler(serviceClasses));
-                            pipeline.addLast(new ChannelInboundHandlerAdapter() {
-                                @Override
-                                public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
-                                    if (evt instanceof IdleStateEvent idle) {
-                                        if (idle.state() == IdleState.READER_IDLE) {
-                                            logger.info("close idle channel {}", ctx.channel());
-                                            ctx.close();
-                                        }
-                                    }
-                                }
-                            });
+                            pipeline.addLast(new IdleHandler());
+                            pipeline.addLast(new ExceptionHandler());
                         }
                     })
                     .bind(config.port());
@@ -128,8 +130,10 @@ public final class Provider implements Closeable {
 
     @Override
     public void close() throws IOException {
+        // stop heartbeat
         serviceKeepAlive.shutdownNow();
 
+        // unregister all services
         for (final String serviceName : serviceClasses.keySet()) {
             registry.unregister(new ServiceMeta(serviceName, new Address(config.host(), config.port())));
         }
